@@ -1,0 +1,6 @@
+# Shell scripts must keep Unix line endings or they break on Linux/macOS
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.ttf binary

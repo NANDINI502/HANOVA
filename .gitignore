@@ -1,0 +1,8 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.aar
+app/src/main/assets/
+.idea/
+.kotlin/

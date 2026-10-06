@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hano inside the adaptive-icon safe zone (launchers crop the outer ~18% on each side) -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/hano_happy"
+    android:inset="19%" />
