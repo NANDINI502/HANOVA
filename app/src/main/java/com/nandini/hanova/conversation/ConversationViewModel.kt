@@ -46,6 +46,7 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
         c.asr.onLevel = {}
         c.asr.onAudio = {}
         c.asr.onSegment = { seg -> collected.add(seg) }
+        c.asr.softCutAfterMs = 0   // hold-to-speak: the button decides when it ends
         _state.update { it.copy(listening = who, partial = "") }
         viewModelScope.launch(Dispatchers.IO) { c.asr.start() }
     }
@@ -56,28 +57,48 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { c.asr.stop() }      // flushes the tail segment
             val segs = synchronized(collected) { collected.toList() }
+            val sep = if (who == Speaker.ME) " " else ""
+
+            // Fast voice: translate + speak the live (pass-1) text immediately…
+            var spoken = false
+            if (c.voice.fastVoice) {
+                val quick = segs.map { it.offlineText }.filter { it.isNotBlank() && !Filler.isFiller(it) }.joinToString(sep)
+                if (quick.isNotBlank()) spoken = deliver(who, quick, speak = true, done = false)
+            }
+
+            // …then the accurate pass refines the text on screen (not spoken twice)
             val heard = withContext(Dispatchers.Default) {
                 segs.map { s -> runCatching { c.accurate.recognize(s) }.getOrDefault(s.offlineText).ifBlank { s.offlineText } }
                     .filter { it.isNotBlank() && !Filler.isFiller(it) }
-                    .joinToString(if (who == Speaker.ME) " " else "")
+                    .joinToString(sep)
             }
             if (heard.isBlank()) {
                 _state.update { it.copy(busy = false, partial = "") }
                 return@launch
             }
-            when (who) {
-                Speaker.THEM -> {
-                    val en = runCatching { c.zhToEn.translate(heard) }.getOrNull()
-                    _state.update { it.copy(forMeEn = en ?: "(translation unavailable)", forMeZh = heard, busy = false, partial = "") }
-                    // English for me → my earbuds (or the speaker if none)
-                    if (en != null && c.voiceOn.value) c.voice.say(en, VoiceOut.Lang.EN, VoiceOut.Route.EARBUDS)
-                }
-                Speaker.ME -> {
-                    val zh = runCatching { c.enToZh.translate(heard) }.getOrNull()
-                    _state.update { it.copy(forThemZh = zh ?: "(無法翻譯)", forThemEn = heard, busy = false, partial = "") }
-                    // Chinese for them → phone loudspeaker, even when my earbuds are in
-                    if (zh != null && c.voiceOn.value) c.voice.say(zh, VoiceOut.Lang.ZH, VoiceOut.Route.PHONE_SPEAKER)
-                }
+            deliver(who, heard, speak = !spoken, done = true)
+        }
+    }
+
+    /** Translate, show, and optionally speak. Returns true if a translation was spoken. */
+    private suspend fun deliver(who: Speaker, heard: String, speak: Boolean, done: Boolean): Boolean {
+        val busy = !done
+        return when (who) {
+            Speaker.THEM -> {
+                val en = runCatching { c.zhToEn.translate(heard) }.getOrNull()
+                _state.update { it.copy(forMeEn = en ?: "(translation unavailable)", forMeZh = heard, busy = busy, partial = "") }
+                // English for me → my earbuds (or the speaker if none)
+                val say = speak && en != null && c.voiceOn.value
+                if (say) c.voice.say(en!!, VoiceOut.Lang.EN, VoiceOut.Route.EARBUDS)
+                say
+            }
+            Speaker.ME -> {
+                val zh = runCatching { c.enToZh.translate(heard) }.getOrNull()
+                _state.update { it.copy(forThemZh = zh ?: "(無法翻譯)", forThemEn = heard, busy = busy, partial = "") }
+                // Chinese for them → phone loudspeaker, even when my earbuds are in
+                val say = speak && zh != null && c.voiceOn.value
+                if (say) c.voice.say(zh!!, VoiceOut.Lang.ZH, VoiceOut.Route.PHONE_SPEAKER)
+                say
             }
         }
     }

@@ -47,6 +47,7 @@ fun VoiceSettingsScreen(voice: VoiceOut, onBack: () -> Unit) {
     var en by remember { mutableStateOf(voice.enVoice) }
     var zh by remember { mutableStateOf(voice.zhVoice) }
     var rate by remember { mutableFloatStateOf(voice.rate) }
+    var fast by remember { mutableStateOf(voice.fastVoice) }
     val enChoices = remember { voice.choices(VoiceOut.Lang.EN) }
     val zhChoices = remember { voice.choices(VoiceOut.Lang.ZH) }
     val leave = { voice.clear(); onBack() }
@@ -83,6 +84,26 @@ fun VoiceSettingsScreen(voice: VoiceOut, onBack: () -> Unit) {
                 }
             }
 
+            Text("Delay", style = HType.Section, modifier = Modifier.padding(top = 12.dp))
+            Card(radius = 20.dp) {
+                Row(
+                    Modifier.fillMaxWidth().clickable(role = Role.Switch) { fast = !fast; voice.fastVoice = fast }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Fast voice", style = HType.Body)
+                        Text(
+                            if (fast) "Speaks short pieces right away. Less delay, English a bit rougher."
+                            else "Waits for whole sentences. Better English, more delay.",
+                            style = HType.Sub,
+                        )
+                    }
+                    Switch(on = fast)
+                }
+            }
+
             VoiceList("English voice · what you hear", enChoices, en) {
                 en = it; voice.enVoice = it; voice.preview(VoiceOut.Lang.EN, it)
             }
@@ -92,6 +113,16 @@ fun VoiceSettingsScreen(voice: VoiceOut, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/** Small pill switch in the app's colours. */
+@Composable
+private fun Switch(on: Boolean) {
+    Box(
+        Modifier.size(width = 48.dp, height = 28.dp).clip(RoundedCornerShape(14.dp))
+            .background(if (on) H.Teal else H.Surface2).padding(3.dp),
+        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+    ) { Box(Modifier.size(22.dp).clip(RoundedCornerShape(11.dp)).background(H.White)) }
 }
 
 @Composable

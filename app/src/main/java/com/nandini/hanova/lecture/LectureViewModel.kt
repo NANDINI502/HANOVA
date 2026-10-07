@@ -119,6 +119,7 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
         }
         c.asr.onLevel = { l -> _state.update { it.copy(level = l) } }
         c.asr.onAudio = { bytes -> wav?.write(bytes) }
+        c.asr.softCutAfterMs = if (c.voice.fastVoice) FAST_CHUNK_MS else 0
         c.asr.onSegment = { seg ->
             queued.incrementAndGet()
             segments.trySend(seg to elapsedNow())
@@ -188,10 +189,15 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
         // 1) Show a quick line right away from the pass-1 text (translation takes ~0.1 s)
         val draftId = draftIds--
         val quickZh = seg.offlineText
+        var spoken = false
         if (quickZh.isNotBlank() && !Filler.isFiller(quickZh)) {
             val quickEn = runCatching { c.zhToEn.translate(quickZh) }.getOrNull()
-            if (quickEn != null) _state.update {
-                it.copy(lines = it.lines + CaptionLine(id = draftId, tMs = tMs, zh = quickZh, en = quickEn, draft = true))
+            if (quickEn != null) {
+                _state.update {
+                    it.copy(lines = it.lines + CaptionLine(id = draftId, tMs = tMs, zh = quickZh, en = quickEn, draft = true))
+                }
+                // Fast voice: speak now, don't wait for the accurate pass
+                if (c.voice.fastVoice) spoken = speak(quickEn)
             }
         }
 
@@ -207,11 +213,7 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
         // Translation fallback: keep the Chinese, retry later.
         val en = runCatching { c.zhToEn.translate(zh) }.getOrNull()
         val pending = en == null
-        // English voice only into earbuds: on the loudspeaker it would disturb the class
-        // and the mic would pick it up instead of the professor
-        if (en != null && c.voiceOn.value && c.voice.headsetConnected()) {
-            c.voice.say(en, VoiceOut.Lang.EN, VoiceOut.Route.EARBUDS, droppable = true)
-        }
+        if (en != null && !spoken) speak(en)
 
         val line = Line(lectureId = lectureId, tMs = tMs, zh = zh, en = en ?: "", translationPending = pending)
         val lineId = withContext(Dispatchers.IO) { db.lines().insert(line) }
@@ -239,6 +241,16 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * English voice only into earbuds: on the loudspeaker it would disturb the class
+     * and the mic would pick it up instead of the professor. Returns true if queued.
+     */
+    private fun speak(en: String): Boolean {
+        if (!c.voiceOn.value || !c.voice.headsetConnected()) return false
+        c.voice.say(en, VoiceOut.Lang.EN, VoiceOut.Route.EARBUDS, droppable = true)
+        return true
+    }
+
     private suspend fun retryPendingTranslations() {
         for (l in db.lines().pending()) {
             val en = runCatching { c.zhToEn.translate(l.zh) }.getOrNull() ?: continue
@@ -248,6 +260,7 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val LIVE_EVERY_MS = 900L
+        const val FAST_CHUNK_MS = 2500L   // fast voice: cut at the first breath after 2.5 s
     }
 
     override fun onCleared() {

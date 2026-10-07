@@ -18,6 +18,7 @@ import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /** One finished sentence: live text + the raw audio (for the accurate second pass). */
 class Segment(val offlineText: String, val pcm16: ByteArray, val sampleRate: Int)
@@ -35,6 +36,12 @@ class AsrEngine(assets: AssetManager) {
     @Volatile var onLevel: (Float) -> Unit = {}
     /** Every 100 ms chunk of (boosted) PCM16 audio — used to save the full lecture as WAV. */
     @Volatile var onAudio: (ByteArray) -> Unit = {}
+    /**
+     * Fast voice: once a segment is this long, also end it at the next short breath
+     * (~0.3 s quieter audio) instead of waiting for the model's 0.8 s pause, and cut it
+     * at [FAST_MAX_MS] at the latest. 0 = off (whole sentences only).
+     */
+    @Volatile var softCutAfterMs: Long = 0
 
     val isRunning: Boolean get() = running
 
@@ -100,6 +107,9 @@ class AsrEngine(assets: AssetManager) {
             val segAudio = ByteArrayOutputStream()
             var lastPartial = ""
             var hadVoice = false
+            var segSamples = 0L
+            var speechRms = 0.05f   // running loudness of speech, to spot short pauses
+            var quietChunks = 0
             record.startRecording()
             try {
                 while (running) {
@@ -117,6 +127,10 @@ class AsrEngine(assets: AssetManager) {
                     segAudio.write(bytes)
                     onAudio(bytes)
                     if (boosted.any { abs(it) > 0.05f }) hadVoice = true
+                    segSamples += n
+                    val rms = sqrt(boosted.fold(0f) { acc, v -> acc + v * v } / n)
+                    speechRms = if (rms > speechRms * 0.5f) speechRms * 0.9f + rms * 0.1f else speechRms * 0.999f
+                    quietChunks = if (rms < speechRms * 0.3f) quietChunks + 1 else 0
 
                     stream.acceptWaveform(boosted, sampleRate)
                     while (recognizer.isReady(stream)) recognizer.decode(stream)
@@ -124,13 +138,18 @@ class AsrEngine(assets: AssetManager) {
                     val text = recognizer.getResult(stream).text.trim()
                     if (text != lastPartial) { lastPartial = text; onPartial(text) }
 
-                    if (recognizer.isEndpoint(stream)) {
+                    val softAfter = softCutAfterMs
+                    val segMs = segSamples * 1000 / sampleRate
+                    val softCut = softAfter > 0 && text.isNotEmpty() &&
+                        ((segMs >= softAfter && quietChunks >= SOFT_PAUSE_CHUNKS) || segMs >= FAST_MAX_MS)
+
+                    if (recognizer.isEndpoint(stream) || softCut) {
                         // Emit if offline heard words OR there was audible voice
                         // (second pass may recognise what the small model missed)
                         if (text.isNotEmpty() || hadVoice) {
                             onSegment(Segment(text, segAudio.toByteArray(), sampleRate))
                         }
-                        segAudio.reset(); hadVoice = false
+                        segAudio.reset(); hadVoice = false; segSamples = 0; quietChunks = 0
                         recognizer.reset(stream)
                         lastPartial = ""; onPartial("")
                     }
@@ -163,4 +182,9 @@ class AsrEngine(assets: AssetManager) {
     fun stop() { running = false; worker?.join(1500); worker = null }
 
     fun release() { stop(); recognizer.release() }
+
+    private companion object {
+        const val SOFT_PAUSE_CHUNKS = 3      // 3 × 100 ms of quieter audio = a breath between phrases
+        const val FAST_MAX_MS = 4500L        // fast voice never waits longer than this
+    }
 }

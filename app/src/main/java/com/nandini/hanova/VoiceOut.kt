@@ -53,6 +53,14 @@ class VoiceOut(private val context: Context) {
     var zhVoice: String?
         get() = prefs.getString("zh", null)
         set(v) = prefs.edit().putString("zh", v).apply()
+    /**
+     * Fast voice: speak the quick (pass-1) translation of short chunks right away,
+     * instead of waiting for whole sentences and the accurate pass. Less delay,
+     * slightly rougher English. Captions on screen are still replaced by the accurate text.
+     */
+    var fastVoice: Boolean
+        get() = prefs.getBoolean("fast", true)
+        set(v) = prefs.edit().putBoolean("fast", v).apply()
     /** 1.0 = natural. Faster sounds more robotic. */
     var rate: Float
         get() = prefs.getFloat("rate", 1.0f)
