@@ -71,7 +71,7 @@ flowchart TD
     DSP["Noise suppression + auto gain<br/>(Android audio effects)"]
     GAIN["Software far-field gain<br/>up to 12×, fast down / slow up"]
     P1["PASS 1: streaming Paraformer zh-en<br/>sherpa-onnx, live text every 100 ms"]
-    EP{"Sentence ended?<br/>0.8 s pause or 6 s max"}
+    EP{"Piece ended?<br/>0.8 s pause or 6 s max<br/>Fast voice: a breath after 2.5 s, max 4.5 s"}
     LIVE["Live English draft<br/>translated about every 0.9 s"]
     QUICK["Quick caption line<br/>from the pass-1 text"]
     P2["PASS 2: SenseVoice<br/>re-hears the whole sentence"]
@@ -90,10 +90,11 @@ flowchart TD
     P1 --> EP
     EP -->|no| P1
     EP -->|yes: sentence audio + text| QUICK
+    QUICK -->|Fast voice| TTS
     QUICK --> P2 --> GLOS --> MT --> UI
     MT --> DB
     MT --> HW --> HWDB
-    MT --> TTS
+    MT -->|Fast voice off| TTS
 ```
 
 ### Why two passes?
