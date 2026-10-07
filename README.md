@@ -56,6 +56,7 @@ That's Hanova. Its mascot is **Hano**, a little dragon who listens so I don't ha
 | 🗣️ | **Conversation mode** | Split screen, hold to speak. Their Chinese → English in your ears; your English → Chinese out loud from the phone speaker |
 | 🎙️ | **Full lecture recording** | The whole class is saved as a WAV, so it can be re-transcribed later with a bigger model |
 | 🔊 | **Voice picker** | Choose from the offline voices on your phone (American, Indian, British English; Taiwan Mandarin) and set the speed |
+| ⚡ | **Fast voice** | Speaks short pieces the moment they're heard, about 2.3 s behind the speaker |
 | ✈️ | **100% offline** | Speech recognition, translation and voice all run on the phone |
 
 ---
@@ -286,14 +287,14 @@ Everything stays on your phone: audio, transcripts and homework. Nothing is uplo
 ## Known limits
 
 - **Distance still matters most.** Sit closer, or use a cheap clip-on mic for big halls.
-- The English voice is **about 2–6 s behind** the professor, because it speaks once a sentence is complete. Live captions on screen are much closer.
+- The English voice is **about 2.3 s behind** the professor with *Fast voice* on (3.3 s with it off), measured on a Galaxy M34. Live captions on screen are closer still. Some delay is unavoidable: Chinese often puts the verb at the end, so even human interpreters stay 2–3 s behind.
 - Translations are machine translations; technical terms improve when you add them to the `Glossary`.
 - Chinese output is in simplified characters (spoken with a Taiwan Mandarin voice).
 - Taiwanese Hokkien is not recognised.
 
 ## What's next
 
-- [ ] "Fast voice" mode: speak in shorter chunks for ~1.5–3 s delay
+- [x] "Fast voice" mode: speak short pieces right away (3.3 s → 2.3 s delay)
 - [ ] Natural-sounding neural voice (sherpa-onnx TTS)
 - [ ] Re-transcribe the saved WAV with a bigger model on a laptop
 - [ ] Course-specific glossaries

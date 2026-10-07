@@ -135,7 +135,7 @@ class AsrEngine(assets: AssetManager) {
                     stream.acceptWaveform(boosted, sampleRate)
                     while (recognizer.isReady(stream)) recognizer.decode(stream)
 
-                    val text = recognizer.getResult(stream).text.trim()
+                    val text = clean(recognizer.getResult(stream).text)
                     if (text != lastPartial) { lastPartial = text; onPartial(text) }
 
                     val softAfter = softCutAfterMs
@@ -154,7 +154,7 @@ class AsrEngine(assets: AssetManager) {
                         lastPartial = ""; onPartial("")
                     }
                 }
-                val tail = recognizer.getResult(stream).text.trim()
+                val tail = clean(recognizer.getResult(stream).text)
                 if (tail.isNotEmpty() || hadVoice) {
                     onSegment(Segment(tail, segAudio.toByteArray(), sampleRate))
                 }
@@ -165,6 +165,9 @@ class AsrEngine(assets: AssetManager) {
             }
         }
     }
+
+    /** The model sometimes leaks its end-of-sentence token into the text. */
+    private fun clean(text: String) = text.replace("</s>", "").trim()
 
     /** Smooth automatic gain: boosts distant voice, never clips. */
     private fun applyGain(chunk: ShortArray, n: Int): FloatArray {

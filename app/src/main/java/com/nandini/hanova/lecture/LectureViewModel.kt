@@ -11,6 +11,7 @@ import com.nandini.hanova.data.Homework
 import com.nandini.hanova.data.Lecture
 import com.nandini.hanova.data.Line
 import com.nandini.hanova.homework.HomeworkDetector
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -19,11 +20,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.os.SystemClock
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 data class CaptionLine(
     val id: Long,
@@ -71,7 +74,10 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(LectureUiState())
     val state: StateFlow<LectureUiState> = _state
 
-    private val segments = Channel<Pair<Segment, Long>>(Channel.UNLIMITED)
+    /** A finished segment waiting for the accurate pass. [quick] = was the quick line spoken? */
+    private class Pending(val seg: Segment, val tMs: Long, val draftId: Long, val quick: Deferred<Boolean>)
+
+    private val segments = Channel<Pending>(Channel.UNLIMITED)
     private val queued = AtomicInteger(0)
     private var startedAt = 0L
     private var pausedTotal = 0L
@@ -80,10 +86,10 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
     private var wav: WavWriter? = null
     private var draftJob: Job? = null
     private var lastDraftAt = 0L
-    private var draftIds = -1L   // negative ids for draft lines (never clash with DB ids)
+    private val draftIds = AtomicLong(-1)   // negative ids for draft lines (never clash with DB ids)
 
     init {
-        viewModelScope.launch { for ((seg, t) in segments) process(seg, t) }
+        viewModelScope.launch { for (p in segments) process(p) }
     }
 
     fun start(course: String) {
@@ -121,8 +127,13 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
         c.asr.onAudio = { bytes -> wav?.write(bytes) }
         c.asr.softCutAfterMs = if (c.voice.fastVoice) FAST_CHUNK_MS else 0
         c.asr.onSegment = { seg ->
+            val t = elapsedNow()
+            val draftId = draftIds.getAndDecrement()
+            // Quick line + fast voice run right away, in parallel: they must never wait
+            // behind the slower accurate pass of the previous segment
+            val quick = viewModelScope.async { showQuick(seg, t, draftId) }
             queued.incrementAndGet()
-            segments.trySend(seg to elapsedNow())
+            segments.trySend(Pending(seg, t, draftId, quick))
         }
     }
 
@@ -182,29 +193,30 @@ class LectureViewModel(app: Application) : AndroidViewModel(app) {
         return s.lectureId
     }
 
-    private suspend fun process(seg: Segment, tMs: Long) {
+    /** 1) Quick line from the pass-1 text (translation ~0.1 s). Returns true if it was spoken. */
+    private suspend fun showQuick(seg: Segment, tMs: Long, draftId: Long): Boolean {
+        val quickZh = seg.offlineText
+        if (quickZh.isBlank() || Filler.isFiller(quickZh)) return false
+        val quickEn = runCatching { c.zhToEn.translate(quickZh) }.getOrNull() ?: return false
+        _state.update {
+            it.copy(lines = it.lines + CaptionLine(id = draftId, tMs = tMs, zh = quickZh, en = quickEn, draft = true))
+        }
+        // Fast voice: speak now, don't wait for the accurate pass
+        return c.voice.fastVoice && speak(quickEn)
+    }
+
+    private suspend fun process(p: Pending) {
+        val seg = p.seg
+        val tMs = p.tMs
+        val draftId = p.draftId
         val backlog = queued.decrementAndGet()
         val lectureId = _state.value.lectureId
-
-        // 1) Show a quick line right away from the pass-1 text (translation takes ~0.1 s)
-        val draftId = draftIds--
-        val quickZh = seg.offlineText
-        var spoken = false
-        if (quickZh.isNotBlank() && !Filler.isFiller(quickZh)) {
-            val quickEn = runCatching { c.zhToEn.translate(quickZh) }.getOrNull()
-            if (quickEn != null) {
-                _state.update {
-                    it.copy(lines = it.lines + CaptionLine(id = draftId, tMs = tMs, zh = quickZh, en = quickEn, draft = true))
-                }
-                // Fast voice: speak now, don't wait for the accurate pass
-                if (c.voice.fastVoice) spoken = speak(quickEn)
-            }
-        }
 
         // 2) Accurate pass. Lag fallback: if sentences pile up, skip it so captions stay live.
         val zh = if (backlog > 3) seg.offlineText else withContext(Dispatchers.Default) {
             runCatching { c.accurate.recognize(seg) }.getOrDefault(seg.offlineText)
         }.ifBlank { seg.offlineText }
+        val spoken = p.quick.await()   // quick line is on screen (and maybe spoken) by now
         if (zh.isBlank() || Filler.isFiller(zh)) {
             _state.update { st -> st.copy(lines = st.lines.filter { it.id != draftId }) }
             return
